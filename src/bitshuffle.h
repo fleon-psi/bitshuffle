@@ -116,6 +116,20 @@ int64_t bshuf_compress_lz4(const void* in, void* out, const size_t size, const s
 int64_t bshuf_decompress_lz4(const void* in, void* out, const size_t size,
         const size_t elem_size, size_t block_size);
 
+#ifdef USE_ZSTD
+
+size_t bshuf_compress_zstd_bound(const size_t size,
+        const size_t elem_size, size_t block_size);
+
+int64_t bshuf_compress_zstd(const void* in, void* out, const size_t size, const size_t
+        elem_size, size_t block_size);
+
+int64_t bshuf_decompress_zstd(const void* in, void* out, const size_t size,
+        const size_t elem_size, size_t block_size);
+
+#endif
+
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

@@ -77,6 +77,9 @@ herr_t bshuf_h5_set_local(hid_t dcpl, hid_t type, hid_t space){
             case 0:
                 break;
             case BSHUF_H5_COMPRESS_LZ4:
+#ifdef USE_ZSTD
+            case BSHUF_H5_COMPRESS_ZSTD:
+#endif
                 break;
             default:
                 PUSH_ERR("bshuf_h5_set_local", H5E_CALLBACK, 
@@ -131,7 +134,26 @@ size_t bshuf_h5_filter(unsigned int flags, size_t cd_nelmts,
             buf_size_out = bshuf_compress_lz4_bound(nbytes_uncomp / elem_size, 
                     elem_size, block_size) + 12;
         }
-    } else {
+    }
+#ifdef USE_ZSTD 
+    else if (cd_nelmts > 4 && cd_values[4] == BSHUF_H5_COMPRESS_ZSTD) {
+		if (flags & H5Z_FLAG_REVERSE) {
+			// First eight bytes is the number of bytes in the output buffer,
+			// little endian.
+			nbytes_uncomp = bshuf_read_uint64_BE(in_buf);
+			// Override the block size with the one read from the header.
+			block_size = bshuf_read_uint32_BE((const char*) in_buf + 8) / elem_size;
+			// Skip over the header.
+			in_buf += 12;
+			buf_size_out = nbytes_uncomp;
+		} else {
+			nbytes_uncomp = nbytes;
+			buf_size_out = bshuf_compress_zstd_bound(nbytes_uncomp / elem_size,
+					elem_size, block_size) + 12;
+		}
+    }
+#endif 
+    else {
         nbytes_uncomp = nbytes;
         buf_size_out = nbytes;
     }
@@ -166,7 +188,30 @@ size_t bshuf_h5_filter(unsigned int flags, size_t cd_nelmts,
             bshuf_write_uint64_BE(out_buf, nbytes_uncomp);
             bshuf_write_uint32_BE((char*) out_buf + 8, block_size * elem_size);
             err = bshuf_compress_lz4(in_buf, (char*) out_buf + 12, size,
-                    elem_size, block_size); nbytes_out = err + 12; } } else {
+                    elem_size, block_size); nbytes_out = err + 12; 
+        } 
+    } 
+#ifdef USE_ZSTD
+    else if (cd_nelmts > 4 && cd_values[4] == BSHUF_H5_COMPRESS_ZSTD) {
+		if (flags & H5Z_FLAG_REVERSE) {
+			// Bit unshuffle/decompress.
+			err = bshuf_decompress_zstd(in_buf, out_buf, size, elem_size, block_size);
+			nbytes_out = nbytes_uncomp;
+		} else {
+			// Bit shuffle/compress.
+			// Write the header, described in
+			// http://www.hdfgroup.org/services/filters/HDF5_LZ4.pdf.
+			// Techincally we should be using signed integers instead of
+			// unsigned ones, however for valid inputs (positive numbers) these
+			// have the same representation.
+			bshuf_write_uint64_BE(out_buf, nbytes_uncomp);
+			bshuf_write_uint32_BE((char*) out_buf + 8, block_size * elem_size);
+			err = bshuf_compress_zstd(in_buf, (char*) out_buf + 12, size,
+					elem_size, block_size); nbytes_out = err + 12;
+		}
+	} 
+#endif
+        else {
                 if (flags & H5Z_FLAG_REVERSE) {
             // Bit unshuffle.
             err = bshuf_bitunshuffle(in_buf, out_buf, size, elem_size,
